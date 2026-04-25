@@ -1,160 +1,123 @@
 <?php
 /**
- * Funciones de autenticación para TimeTracker
- * Manejo de sesiones y verificación de usuarios
+ * Funcions d'autenticació i seguretat - TimeTracker
+ * Inclou protecció CSRF i validació de sessió
  */
 
-// Iniciar sesión si no está iniciada
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
-
-// Incluir archivo de configuración de base de datos
-require_once __DIR__ . '/../config/database.php';
+// Carregar configuració
+require_once __DIR__ . '/../config/config.php';
 
 /**
- * Inicia sesión de usuario verificando credenciales
- * @param string $email Email del usuario
- * @param string $password Contraseña en texto plano
- * @return array ['success' => bool, 'message' => string]
+ * Genera un token CSRF i el guarda a la sessió
+ * @return string Token CSRF
  */
-function iniciarSesion($email, $password) {
-    try {
-        $conexion = obtenerConexion();
-        
-        $sql = "SELECT id, nom, cognoms, email, password_hash, rol, actiu 
-                FROM usuaris 
-                WHERE email = :email AND actiu = 1";
-        
-        $stmt = $conexion->prepare($sql);
-        $stmt->bindParam(':email', $email, PDO::PARAM_STR);
-        $stmt->execute();
-        
-        $usuario = $stmt->fetch();
-        
-        if ($usuario && password_verify($password, $usuario['password_hash'])) {
-            // Regenerar ID de sesión para prevenir fijación de sesión
-            session_regenerate_id(true);
-            
-            $_SESSION['usuario_id'] = $usuario['id'];
-            $_SESSION['usuario_nombre'] = $usuario['nom'] . ' ' . $usuario['cognoms'];
-            $_SESSION['usuario_email'] = $usuario['email'];
-            $_SESSION['usuario_rol'] = $usuario['rol'];
-            $_SESSION['usuario_autenticado'] = true;
-            
-            return ['success' => true, 'message' => 'Sesión iniciada correctamente'];
-        } else {
-            return ['success' => false, 'message' => 'Email o contraseña incorrectos'];
-        }
-    } catch (PDOException $e) {
-        error_log("Error en inicio de sesión: " . $e->getMessage());
-        return ['success' => false, 'message' => 'Error en el sistema. Intente nuevamente.'];
+function generarTokenCSRF() {
+    if (empty($_SESSION[CSRF_TOKEN_NAME]) || 
+        empty($_SESSION[CSRF_TOKEN_EXPIRE_TIME]) || 
+        $_SESSION[CSRF_TOKEN_EXPIRE_TIME] < time()) {
+        $_SESSION[CSRF_TOKEN_NAME] = bin2hex(random_bytes(32));
+        $_SESSION[CSRF_TOKEN_EXPIRE_TIME] = time() + CSRF_TOKEN_EXPIRE;
     }
+    return $_SESSION[CSRF_TOKEN_NAME];
 }
 
 /**
- * Cierra la sesión del usuario actual
+ * Valida el token CSRF enviat per POST
+ * @param string $token Token a validar
+ * @return bool True si és vàlid
  */
-function cerrarSesion() {
-    // Limpiar todas las variables de sesión
-    $_SESSION = array();
-    
-    // Destruir la cookie de sesión
-    if (isset($_COOKIE[session_name()])) {
-        setcookie(session_name(), '', time() - 3600, '/');
+function validarTokenCSRF($token) {
+    if (!isset($_SESSION[CSRF_TOKEN_NAME]) || empty($token)) {
+        return false;
+    }
+    return hash_equals($_SESSION[CSRF_TOKEN_NAME], $token);
+}
+
+/**
+ * Retorna un camp ocult amb el token CSRF per a formularis
+ * @return string Camp HTML ocult
+ */
+function campTokenCSRF() {
+    return '<input type="hidden" name="' . CSRF_TOKEN_NAME . '" value="' . generarTokenCSRF() . '">';
+}
+
+/**
+ * Verifica que l'usuari està autenticat
+ * Redirigeix a login si no hi ha sessió
+ */
+function checkAuth() {
+    if (!isset($_SESSION['usuario_autenticado']) || !$_SESSION['usuario_autenticado']) {
+        header('Location: ' . APP_URL . 'public/login.php');
+        exit;
     }
     
-    // Destruir la sesión
-    session_destroy();
-}
-
-/**
- * Verifica si el usuario está autenticado
- * @return bool
- */
-function usuarioAutenticado() {
-    return isset($_SESSION['usuario_autenticado']) && $_SESSION['usuario_autenticado'] === true;
-}
-
-/**
- * Obtiene los datos del usuario actual en sesión
- * @return array|null
- */
-function obtenerUsuarioActual() {
-    if (usuarioAutenticado()) {
-        return [
-            'id' => $_SESSION['usuario_id'],
-            'nombre' => $_SESSION['usuario_nombre'],
-            'email' => $_SESSION['usuario_email'],
-            'rol' => $_SESSION['usuario_rol']
-        ];
+    // Verificar timeout de sessió
+    if (isset($_SESSION['ultima_activitat']) && (time() - $_SESSION['ultima_activitat']) > SESSION_LIFETIME) {
+        session_destroy();
+        header('Location: ' . APP_URL . 'public/login.php?msg=timeout');
+        exit;
     }
-    return null;
+    
+    $_SESSION['ultima_activitat'] = time();
 }
 
 /**
- * Redirige al login si el usuario no está autenticado
+ * Verifica que l'usuari té el rol especificat
+ * @param string $rol Rol requerit
  */
-function redirigirSiNoAutenticado() {
-    if (!usuarioAutenticado()) {
-        header('Location: login.php');
+function requireRole($rol) {
+    checkAuth();
+    
+    if (!isset($_SESSION['usuario_rol']) || $_SESSION['usuario_rol'] !== $rol) {
+        header('Location: ' . APP_URL . 'public/login.php?msg=unauthorized');
         exit;
     }
 }
 
 /**
- * Verifica si el usuario tiene un rol específico
- * @param string $rol Rol a verificar ('admin' o 'empleat')
- * @return bool
+ * Retorna l'usuari actual de la sessió
+ * @return array Dades de l'usuari
  */
-function tieneRol($rol) {
-    return isset($_SESSION['usuario_rol']) && $_SESSION['usuario_rol'] === $rol;
+function obtenerUsuarioActual() {
+    return [
+        'id' => $_SESSION['usuario_id'] ?? null,
+        'nombre' => $_SESSION['usuario_nombre'] ?? 'Usuari',
+        'email' => $_SESSION['usuario_email'] ?? '',
+        'rol' => $_SESSION['usuario_rol'] ?? 'empleat'
+    ];
 }
 
 /**
- * Verifica si el usuario es administrador
+ * Verifica si l'usuari actual és admin
  * @return bool
  */
 function esAdmin() {
-    return tieneRol('admin');
+    return isset($_SESSION['usuario_rol']) && $_SESSION['usuario_rol'] === 'admin';
 }
 
 /**
- * Verifica que el usuario esté autenticado, redirigiendo al login si no lo está
- * Esta función debe llamarse al inicio de las páginas protegidas
+ * Obté la connexió a la base de dades
+ * @return PDO Connexió PDO
  */
-function checkAuth() {
-    if (!usuarioAutenticado()) {
-        // Guardar URL actual para redirigir después del login
-        $_SESSION['redirect_after_login'] = $_SERVER['REQUEST_URI'];
-        header('Location: /public/login.php');
-        exit;
+function obtenerConexion() {
+    try {
+        $dsn = "mysql:host=" . DB_HOST . ";dbname=" . DB_NAME . ";charset=" . DB_CHARSET;
+        $opciones = [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+            PDO::ATTR_EMULATE_PREPARES => false,
+        ];
+        return new PDO($dsn, DB_USER, DB_PASS, $opciones);
+    } catch (PDOException $e) {
+        error_log("Error de connexió: " . $e->getMessage());
+        die("Error en el sistema. Contacteu amb l'administrador.");
     }
 }
 
 /**
- * Verifica que el usuario tenga un rol específico, redirigiendo si no lo tiene
- * @param string $rolRequerido Rol requerido ('admin' o 'empleat')
- */
-function requireRole($rolRequerido) {
-    checkAuth(); // Primero verificamos que esté autenticado
-    
-    if (!tieneRol($rolRequerido)) {
-        // Si no tiene el rol requerido, redirigir a su dashboard correspondiente
-        $rolActual = $_SESSION['usuario_rol'] ?? 'empleat';
-        if ($rolActual === 'admin') {
-            header('Location: /admin/dashboard.php');
-        } else {
-            header('Location: /empleat/dashboard.php');
-        }
-        exit;
-    }
-}
-
-/**
- * Limpia y valida los datos de entrada
- * @param string $data Dato a limpiar
- * @return string Dato limpio
+ * Neteja i sanititza una entrada
+ * @param string $data Dada a netejar
+ * @return string Dada neta
  */
 function limpiarInput($data) {
     $data = trim($data);
@@ -164,64 +127,42 @@ function limpiarInput($data) {
 }
 
 /**
- * Valida un email
- * @param string $email Email a validar
- * @return string|false Email limpio si es válido, false si no
+ * Redirigeix amb un missatge de feedback
+ * @param string $url URL de destí
+ * @param string $tipus Tipus de missatge (success, error, info)
+ * @param string $missatge Missatge
  */
-function validarEmail($email) {
-    $email = filter_var($email, FILTER_SANITIZE_EMAIL);
-    if (filter_var($email, FILTER_VALIDATE_EMAIL)) {
-        return $email;
-    }
-    return false;
-}
-
-/**
- * Establece una cookie para recordar el email del usuario
- * @param string $email Email a recordar
- * @param int $dias Días de duración de la cookie (por defecto 30)
- */
-function recordarEmail($email, $dias = 30) {
-    $tiempoExpiracion = time() + ($dias * 24 * 60 * 60);
-    setcookie('recordar_email', $email, $tiempoExpiracion, '/');
-}
-
-/**
- * Elimina la cookie de recordar email
- */
-function eliminarCookieRecordarEmail() {
-    if (isset($_COOKIE['recordar_email'])) {
-        setcookie('recordar_email', '', time() - 3600, '/');
-    }
-}
-
-/**
- * Obtiene el email recordado de la cookie
- * @return string|null Email recordado o null
- */
-function obtenerEmailRecordado() {
-    return $_COOKIE['recordar_email'] ?? null;
-}
-
-/**
- * Redirige al usuario según su rol después del login
- */
-function redirigirSegunRol() {
-    // Verificar si hay una URL de redirección guardada
-    $redirectUrl = $_SESSION['redirect_after_login'] ?? null;
-    unset($_SESSION['redirect_after_login']);
-    
-    if ($redirectUrl && strpos($redirectUrl, '/public/') === 0) {
-        header('Location: ' . $redirectUrl);
-        exit;
-    }
-    
-    // Redirección por defecto según rol
-    $rol = $_SESSION['usuario_rol'] ?? 'empleat';
-    if ($rol === 'admin') {
-        header('Location: /admin/dashboard.php');
-    } else {
-        header('Location: /empleat/dashboard.php');
-    }
+function redirigirConMensaje($url, $tipus, $missatge) {
+    $_SESSION['flash_type'] = $tipus;
+    $_SESSION['flash_message'] = $missatge;
+    header('Location: ' . $url);
     exit;
+}
+
+/**
+ * Mostra i elimina un missatge flash
+ * @return string HTML del missatge
+ */
+function mostrarFlashMessage() {
+    if (isset($_SESSION['flash_message'])) {
+        $tipus = $_SESSION['flash_type'] ?? 'info';
+        $missatge = $_SESSION['flash_message'];
+        unset($_SESSION['flash_message']);
+        unset($_SESSION['flash_type']);
+        
+        $classes = [
+            'success' => 'alert-success',
+            'error' => 'alert-danger',
+            'info' => 'alert-info',
+            'warning' => 'alert-warning'
+        ];
+        
+        $classe = $classes[$tipus] ?? $classes['info'];
+        
+        return '<div class="alert ' . $classe . ' alert-dismissible fade show" role="alert">
+                    ' . htmlspecialchars($missatge) . '
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>';
+    }
+    return '';
 }
