@@ -6,9 +6,9 @@ require_once '../config/database.php';
 // Si ya está logueado, redirigir
 if (isset($_SESSION['usuari_id'])) {
     if ($_SESSION['rol'] === 'admin') {
-        header('Location: /0376-RA6PR1-XiangTianRuirong/horapp/admin/dashboard.php');
+        header('Location: /admin/dashboard.php');
     } else {
-        header('Location: /0376-RA6PR1-XiangTianRuirong/horapp/empleat/dashboard.php');
+        header('Location: /empleat/dashboard.php');
     }
     exit;
 }
@@ -39,9 +39,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 setcookie('remember_email', $email, time() + (86400 * 30), '/');
 
                 if ($usuari['rol'] === 'admin') {
-                    header('Location: /0376-RA6PR1-XiangTianRuirong/horapp/admin/dashboard.php');
+                    header('Location: /admin/dashboard.php');
                 } else {
-                    header('Location: /0376-RA6PR1-XiangTianRuirong/horapp/empleat/dashboard.php');
+                    header('Location: /empleat/dashboard.php');
                 }
                 exit;
             } else {
