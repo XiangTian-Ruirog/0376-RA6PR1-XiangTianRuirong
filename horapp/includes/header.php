@@ -39,9 +39,15 @@ $rol = $_SESSION['rol'] ?? '';
                     <li class="nav-item">
                         <a class="nav-link" href="/admin/reports.php">Reports</a>
                     </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/admin/calendari.php">Calendari</a>
+                    </li>
                 <?php else: ?>
                     <li class="nav-item">
                         <a class="nav-link" href="/empleat/dashboard.php">Inici</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/empleat/calendari.php">Calendari</a>
                     </li>
                 <?php endif; ?>
             </ul>
