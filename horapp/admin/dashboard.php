@@ -45,6 +45,37 @@ $stmt = $pdo->prepare('
 ');
 $stmt->execute();
 $registres_avui = $stmt->fetchAll();
+
+// Dades per al gràfic de línies (últims 7 dies)
+$stmt = $pdo->prepare('
+    SELECT data,
+           COUNT(DISTINCT usuari_id) AS empleats_fitxats,
+           COALESCE(SUM(total_hores), 0) AS total_hores
+    FROM registres_hores
+    WHERE data >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
+    AND total_hores IS NOT NULL
+    GROUP BY data
+    ORDER BY data ASC
+');
+$stmt->execute();
+$dades_setmana = $stmt->fetchAll();
+
+// Preparar dades per al gràfic
+$labels_setmana    = [];
+$empleats_per_dia  = [];
+$hores_per_dia     = [];
+
+// Assegurar que tots els 7 dies apareixen
+for ($i = 6; $i >= 0; $i--) {
+    $data = date('Y-m-d', strtotime("-$i days"));
+    $labels_setmana[] = date('d/m', strtotime($data));
+    $empleats_per_dia[$data] = 0;
+    $hores_per_dia[$data]    = 0;
+}
+foreach ($dades_setmana as $d) {
+    $empleats_per_dia[$d['data']] = (int)$d['empleats_fitxats'];
+    $hores_per_dia[$d['data']]    = (float)$d['total_hores'];
+}
 ?>
 
 <h2 class="mb-4">📊 Dashboard Admin</h2>
@@ -85,6 +116,16 @@ $registres_avui = $stmt->fetchAll();
     </div>
 </div>
 
+<!-- Gràfic de línies -->
+<div class="card shadow-sm mb-4">
+    <div class="card-header bg-white">
+        <h5 class="mb-0">📈 Activitat dels últims 7 dies</h5>
+    </div>
+    <div class="card-body">
+        <canvas id="graficSetmana" height="80"></canvas>
+    </div>
+</div>
+
 <!-- Registres d'avui -->
 <div class="card shadow-sm">
     <div class="card-header bg-white">
@@ -119,5 +160,58 @@ $registres_avui = $stmt->fetchAll();
         </table>
     </div>
 </div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+const labels = <?= json_encode($labels_setmana) ?>;
+const empleatsPerDia = <?= json_encode(array_values($empleats_per_dia)) ?>;
+const horesPerDia = <?= json_encode(array_values($hores_per_dia)) ?>;
+
+new Chart(document.getElementById('graficSetmana'), {
+    type: 'line',
+    data: {
+        labels: labels,
+        datasets: [
+            {
+                label: 'Empleats fitxats',
+                data: empleatsPerDia,
+                borderColor: 'rgba(13, 110, 253, 1)',
+                backgroundColor: 'rgba(13, 110, 253, 0.1)',
+                tension: 0.4,
+                fill: true,
+                yAxisID: 'y'
+            },
+            {
+                label: 'Total hores',
+                data: horesPerDia,
+                borderColor: 'rgba(25, 135, 84, 1)',
+                backgroundColor: 'rgba(25, 135, 84, 0.1)',
+                tension: 0.4,
+                fill: true,
+                yAxisID: 'y1'
+            }
+        ]
+    },
+    options: {
+        responsive: true,
+        interaction: { mode: 'index', intersect: false },
+        scales: {
+            y: {
+                type: 'linear',
+                display: true,
+                position: 'left',
+                title: { display: true, text: 'Empleats' }
+            },
+            y1: {
+                type: 'linear',
+                display: true,
+                position: 'right',
+                title: { display: true, text: 'Hores' },
+                grid: { drawOnChartArea: false }
+            }
+        }
+    }
+});
+</script>
 
 <?php require_once '../includes/footer.php'; ?>
